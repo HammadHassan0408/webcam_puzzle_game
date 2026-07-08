@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="description" content="PuzzleCam — an interactive webcam puzzle game by Hammad Hassan. Solve a live puzzle using hand tracking, right from your browser." />
+<meta name="theme-color" content="#0b0b0f" />
+<meta name="color-scheme" content="dark" />
+
+<!-- Open Graph / sharing preview -->
+<meta property="og:title" content="PuzzleCam — by Hammad Hassan" />
+<meta property="og:description" content="Solve a live puzzle using hand tracking, right from your webcam." />
+<meta property="og:image" content="og-preview.png" />
+<meta property="og:type" content="website" />
+
+<link rel="icon" href="favicon.ico" />
+<link rel="preconnect" href="https://cdn.jsdelivr.net" />
+<link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
+
+<title>PuzzleCam — by Hammad Hassan</title>
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<noscript>
+  <div class="noscript-msg">
+    PuzzleCam needs JavaScript and camera access to run. Please enable JavaScript in your browser to continue.
+  </div>
+</noscript>
+
+<div id="app">
+
+  <main id="stage">
+    <video id="webcam" playsinline autoplay muted aria-hidden="true"></video>
+    <canvas id="sceneCanvas" role="img" aria-label="Live puzzle game view from webcam"></canvas>
+
+    <div class="hud-top">
+      <div class="brand">PUZZLE·CAM <small>by Hammad Hassan</small></div>
+      <div class="status-pill">
+        <span id="statusDot" class="status-dot" aria-hidden="true"></span>
+        <span id="statusText" role="status" aria-live="polite">starting camera…</span>
+      </div>
+    </div>
+
+    <div id="progressBadge" class="progress-badge">
+      <span id="progressText" role="status" aria-live="polite">0 / 9 pieces placed</span>
+    </div>
+
+    <!-- Idle guide: shown while waiting for two hands, tells the user what to do -->
+    <div id="idleGuide" class="idle-guide" aria-hidden="true">
+      raise both hands and pinch thumb + index to frame your puzzle
+    </div>
+
+    <!-- Hold ring: reused for both pinch-hold (framing) and fist-hold (save) progress -->
+    <div id="holdRing" class="hold-ring hidden" aria-hidden="true">
+      <svg viewBox="0 0 100 100">
+        <circle class="hold-ring-bg" cx="50" cy="50" r="42"></circle>
+        <circle id="holdRingFg" class="hold-ring-fg" cx="50" cy="50" r="42"></circle>
+      </svg>
+    </div>
+
+    <!-- Countdown number now lives in HTML/CSS (not canvas) so it respects reduced-motion -->
+    <div id="countdownOverlay" class="countdown-overlay hidden" aria-live="assertive">
+      <span id="countdownNumber" class="countdown-number">3</span>
+    </div>
+
+    <div id="recIndicator" class="rec-indicator hidden" role="status" aria-live="assertive">
+      <span class="rec-dot" aria-hidden="true"></span> REC
+    </div>
+
+    <div id="recTooltip" class="rec-tooltip hidden" role="status">
+      We're recording your solve — you can download it from the gallery panel once you finish.
+      <button type="button" id="recTooltipClose" class="rec-tooltip-close" aria-label="Dismiss tip">×</button>
+    </div>
+
+    <div id="loadingOverlay" role="status" aria-live="polite">
+      <div class="loader-text" id="loaderText">loading HandLandmarker model…</div>
+      <div class="loader-bar" aria-hidden="true"></div>
+      <button type="button" id="loaderRetry" class="loader-retry hidden">retry</button>
+    </div>
+
+    <div id="cameraDeniedBanner" class="camera-denied-banner hidden" role="alert">
+      <p><strong>Camera access denied.</strong> PuzzleCam needs your webcam to work.</p>
+      <p class="camera-denied-help">
+        Click the camera icon in your browser's address bar and allow access, then reload the page.
+      </p>
+      <button type="button" id="cameraDeniedRetry" class="loader-retry">try again</button>
+    </div>
+
+    <div id="errorBanner" role="alert" aria-live="assertive"></div>
+    <div id="flashOverlay" aria-hidden="true"></div>
+
+    <!-- Persistent gesture legend -->
+    <div class="hud-bottom" id="gestureLegend">
+      <div class="gesture-key">
+        <div class="item"><span class="swatch pinch" aria-hidden="true"></span> pinch both hands — frame</div>
+        <div class="item"><span class="swatch drag" aria-hidden="true"></span> pinch — drag piece</div>
+        <div class="item"><span class="swatch fist" aria-hidden="true"></span> fist — save / reset</div>
+      </div>
+    </div>
+  </main>
+
+  <aside id="gallery" aria-label="Completed puzzle gallery">
+    <div class="gallery-head">
+      <span class="gallery-title">Strip</span>
+      <span class="gallery-count" id="galleryCount">0 / 3</span>
+    </div>
+
+    <div class="strip-complete-msg" id="stripCompleteMsg" role="status" aria-live="polite">
+      strip complete — download or reset to continue
+    </div>
+
+    <div id="galleryStrip" class="gallery-strip">
+      <div class="gallery-empty" id="galleryEmpty">
+        Your completed puzzles<br/>will appear here.<br/>
+        <small>tap a photo to view it</small>
+      </div>
+    </div>
+
+    <div class="gallery-actions">
+      <button type="button" id="downloadStripBtn" class="gallery-action-btn" disabled aria-label="Download completed puzzle strip" title="Complete a puzzle first">download strip</button>
+      <button type="button" id="downloadVideoBtn" class="gallery-action-btn" disabled aria-label="Download recorded video" title="Solve a puzzle to record a video">download video</button>
+      <button type="button" id="resetAllBtn" class="gallery-action-btn gallery-action-btn--danger" aria-label="Reset all puzzles and clear gallery">reset all</button>
+    </div>
+  </aside>
+
+</div>
+
+<footer class="copyright">© 2026 Hammad Hassan — all rights reserved</footer>
+
+<!-- First-run onboarding -->
+<div id="onboardingOverlay" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+  <div class="onboarding-inner">
+    <div class="onboarding-title" id="onboardingTitle">HOW TO PLAY</div>
+    <div class="onboarding-steps">
+      <div class="onboarding-step">
+        <div class="onboarding-icon" aria-hidden="true">🤏🤏</div>
+        <div class="onboarding-text"><strong>Frame it</strong><br/>Pinch thumb + index with both hands to draw a frame, then hold still for the countdown.</div>
+      </div>
+      <div class="onboarding-step">
+        <div class="onboarding-icon" aria-hidden="true">🤏</div>
+        <div class="onboarding-text"><strong>Solve it</strong><br/>Pinch a puzzle piece and drag it into its matching cell.</div>
+      </div>
+      <div class="onboarding-step">
+        <div class="onboarding-icon" aria-hidden="true">✊</div>
+        <div class="onboarding-text"><strong>Save it</strong><br/>Once solved, make a fist and hold it to save the photo to your strip.</div>
+      </div>
+    </div>
+    <button type="button" id="onboardingDismiss" class="onboarding-btn">Got it, let's go</button>
+  </div>
+</div>
+
+<div id="stripModal" class="strip-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stripModalTitle">
+  <div class="strip-modal-inner">
+    <div class="strip-modal-title" id="stripModalTitle">YOUR PHOTO STRIP</div>
+    <canvas id="stripPreviewCanvas" role="img" aria-label="Preview of your completed photo strip"></canvas>
+    <div class="strip-modal-actions">
+      <button id="stripModalDownload" class="strip-modal-btn">download</button>
+      <button id="stripModalClose" class="strip-modal-btn strip-modal-btn--ghost">close</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
