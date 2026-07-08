@@ -904,13 +904,13 @@ function finishCountdownAndCapture(box) {
     for (let col = 0; col < GRID; col++) {
       const sx = col * tileW;
       const sy = row * tileH;
-      const w = col === GRID - 1 ? cropCanvas.width - sx : tileW;
-      const h = row === GRID - 1 ? cropCanvas.height - sy : tileH;
+      // Every piece is EXACTLY tileW x tileH — no bigger "leftover" edge pieces.
+      // This guarantees any piece can sit in any cell without overflowing it.
       const pieceCanvas = document.createElement("canvas");
-      pieceCanvas.width = w;
-      pieceCanvas.height = h;
-      pieceCanvas.getContext("2d").drawImage(cropCanvas, sx, sy, w, h, 0, 0, w, h);
-      pieces.push({ row, col, canvas: pieceCanvas, w, h, x: 0, y: 0, placed: false, dragging: false });
+      pieceCanvas.width = tileW;
+      pieceCanvas.height = tileH;
+      pieceCanvas.getContext("2d").drawImage(cropCanvas, sx, sy, tileW, tileH, 0, 0, tileW, tileH);
+      pieces.push({ row, col, canvas: pieceCanvas, w: tileW, h: tileH, x: 0, y: 0, placed: false, dragging: false });
     }
   }
 
@@ -970,36 +970,51 @@ function snapPieceToCell(piece, box, tileW, tileH) {
 function displaceCellOccupant(piece, targetRow, targetCol, box, tileW, tileH) {
   const cellX = box.x + targetCol * tileW;
   const cellY = box.y + targetRow * tileH;
-  const occupant = puzzle.pieces.find((p) => {
+
+  // Find ALL pieces currently sitting in this cell (not just the first one)
+  const occupants = puzzle.pieces.filter((p) => {
     if (p === piece || p.displacing) return false;
     const cx = p.x + p.w / 2;
     const cy = p.y + p.h / 2;
     return cx >= cellX && cx < cellX + tileW && cy >= cellY && cy < cellY + tileH;
   });
-  if (!occupant) return;
-  if (occupant.row === targetRow && occupant.col === targetCol && occupant.placed) return;
-  occupant.placed = false;
-  const freeCells = [];
-  for (let row = 0; row < GRID; row++) {
-    for (let col = 0; col < GRID; col++) {
-      if (row === targetRow && col === targetCol) continue;
-      const cx0 = box.x + col * tileW;
-      const cy0 = box.y + row * tileH;
-      const taken = puzzle.pieces.some((p) => {
-        if (p === occupant || p === piece || p.displacing) return false;
-        const cx = p.x + p.w / 2;
-        const cy = p.y + p.h / 2;
-        return cx >= cx0 && cx < cx0 + tileW && cy >= cy0 && cy < cy0 + tileH;
-      });
-      if (!taken) freeCells.push({ row, col });
+
+  if (occupants.length === 0) return;
+
+  const claimedCells = new Set(); // cells we've already assigned this call, so two occupants don't collide
+
+  occupants.forEach((occupant) => {
+    if (occupant.row === targetRow && occupant.col === targetCol && occupant.placed) return;
+    occupant.placed = false;
+
+    const freeCells = [];
+    for (let row = 0; row < GRID; row++) {
+      for (let col = 0; col < GRID; col++) {
+        if (row === targetRow && col === targetCol) continue;
+        const key = `${row},${col}`;
+        if (claimedCells.has(key)) continue;
+        const cx0 = box.x + col * tileW;
+        const cy0 = box.y + row * tileH;
+        const taken = puzzle.pieces.some((p) => {
+          if (p === occupant || p === piece || p.displacing) return false;
+          const cx = p.x + p.w / 2;
+          const cy = p.y + p.h / 2;
+          return cx >= cx0 && cx < cx0 + tileW && cy >= cy0 && cy < cy0 + tileH;
+        });
+        if (!taken) freeCells.push({ row, col });
+      }
     }
-  }
-  let targetSlot = freeCells.length > 0
-    ? freeCells[Math.floor(Math.random() * freeCells.length)]
-    : { row: occupant.row, col: occupant.col };
-  const jitterX = (Math.random() - 0.5) * tileW * 0.5;
-  const jitterY = (Math.random() - 0.5) * tileH * 0.5;
-  animateDisplacement(occupant, box.x + targetSlot.col * tileW + jitterX, box.y + targetSlot.row * tileH + jitterY, box);
+
+    const targetSlot = freeCells.length > 0
+      ? freeCells[Math.floor(Math.random() * freeCells.length)]
+      : { row: occupant.row, col: occupant.col };
+
+    claimedCells.add(`${targetSlot.row},${targetSlot.col}`);
+
+    const jitterX = (Math.random() - 0.5) * tileW * 0.5;
+    const jitterY = (Math.random() - 0.5) * tileH * 0.5;
+    animateDisplacement(occupant, box.x + targetSlot.col * tileW + jitterX, box.y + targetSlot.row * tileH + jitterY, box);
+  });
 }
 
 const DISPLACE_ANIM_MS = 220;
@@ -1072,13 +1087,17 @@ function handleDragForHand(handLabel, pinching, indexPx) {
       if (isNearOwnCell(piece, puzzle.boardBox, puzzle.tileW, puzzle.tileH)) {
         snapPieceToCell(piece, puzzle.boardBox, puzzle.tileW, puzzle.tileH);
       } else {
-        clampPieceToBoard(piece);
         const box = puzzle.boardBox;
         const cx = piece.x + piece.w / 2;
         const cy = piece.y + piece.h / 2;
         const dropCol = Math.min(GRID - 1, Math.max(0, Math.floor((cx - box.x) / puzzle.tileW)));
         const dropRow = Math.min(GRID - 1, Math.max(0, Math.floor((cy - box.y) / puzzle.tileH)));
+        // Move whichever piece currently occupies that cell out of the way first...
         displaceCellOccupant(piece, dropRow, dropCol, box, puzzle.tileW, puzzle.tileH);
+        // ...then snap THIS piece exactly onto that cell (swap behavior, like a real puzzle)
+        piece.x = box.x + dropCol * puzzle.tileW;
+        piece.y = box.y + dropRow * puzzle.tileH;
+        clampPieceToBoard(piece);
       }
       drag.activeHand = null;
       const wasSolved = puzzle.solved;
